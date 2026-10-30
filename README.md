@@ -50,7 +50,7 @@ Arch package names; other distros have the same programs.
 ## Install
 
 ```sh
-git clone <this repo> eva-dotfiles && cd eva-dotfiles
+git clone https://github.com/IcedLimes/eva-dotfiles && cd eva-dotfiles
 ./install.sh --plugins
 ```
 
