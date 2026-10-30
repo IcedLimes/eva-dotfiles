@@ -1,0 +1,2 @@
+# Colors and layout live in the active theme (eva-theme rewrites it).
+include=~/.config/eva/current/mako.conf

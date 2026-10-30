@@ -1,0 +1,27 @@
+#!/bin/sh
+# 活動限界 (activity limit): time left on battery, like the EVA internal-power countdown.
+#   activity-limit time   -> "03:42" on battery, "--:--" when plugged in
+#   activity-limit label  -> caption for the lock screen
+B=/sys/class/power_supply/BAT1
+online=$(cat /sys/class/power_supply/ADP1/online 2>/dev/null || echo 1)
+
+if [ "$online" = 1 ]; then
+    case "$1" in
+        time) echo "--:--" ;;
+        *)    echo "外部電源 接続 · UMBILICAL CABLE CONNECTED" ;;
+    esac
+    exit 0
+fi
+
+now=$(cat $B/charge_now 2>/dev/null); rate=$(cat $B/current_now 2>/dev/null)
+pct=$(cat $B/capacity 2>/dev/null)
+case "$1" in
+    time)
+        if [ -n "$rate" ] && [ "$rate" -gt 0 ]; then
+            mins=$(( now * 60 / rate ))
+            printf "%02d:%02d\n" $(( mins / 60 )) $(( mins % 60 ))
+        else
+            echo "--:--"
+        fi ;;
+    *) echo "活動限界まで · INTERNAL POWER ${pct}%" ;;
+esac

@@ -1,0 +1,88 @@
+--- a/StarryNight/theme.js
++++ b/StarryNight/theme.js
+@@ -125,3 +125,34 @@
+     });
+   }
+ });
++
++// eva: the stars and the spinning cover only move while Spotify has focus.
++// Chromium repaints every frame for them, which kept ~50% of the iGPU busy
++// even with Spotify paused and minimized; unfocused they hold still.
++// (The cover is paused by the eva-still class in user.css, so its own
++// play/pause styling keeps working; the stars' inline animations can only be
++// paused from script.)
++(function () {
++  const held = new Set();
++  const sync = () => {
++    const still = !document.hasFocus();
++    document.documentElement.classList.toggle('eva-still', still);
++    if (still) {
++      for (const a of document.getAnimations()) {
++        const el = a.effect && a.effect.target;
++        if (a.playState === 'running' && el && el.closest && el.closest('.starrynight-bg-container')) {
++          a.pause();
++          held.add(a);
++        }
++      }
++    } else {
++      for (const a of held) if (a.playState === 'paused') a.play();
++      held.clear();
++    }
++  };
++  window.addEventListener('blur', sync);
++  window.addEventListener('focus', sync);
++  // a shooting star starts a fresh animation each time one lands
++  document.addEventListener('animationstart', () => { if (!document.hasFocus()) sync(); }, true);
++  setTimeout(sync, 3000);
++})();
+--- a/StarryNight/user.css
++++ b/StarryNight/user.css
+@@ -456,3 +456,8 @@
+     opacity: 0;
+   }
+ }
++
++/* eva: hold the cover still while Spotify isn't focused (see theme.js) */
++html.eva-still.eva-still.eva-still [data-testid="now-playing-bar"] .main-nowPlayingWidget-coverArt .cover-art img {
++  animation-play-state: paused !important;
++}
+--- a/StarryNight/color.ini
++++ b/StarryNight/color.ini
+@@ -213,4 +213,35 @@
+ notification-error      = E22134 
+ notification            = 4687d6
+ tab-active              = 333333
+-player                  = 181818
+\ No newline at end of file
++player                  = 181818
++[Mono]
++; EVA MONO: pure black sky (the stars stay), dark grey cards, white accents.
++star                    = FFFFFF
++star-glow               = FFFFFF
++shooting-star           = FFFFFF
++shooting-star-glow      = FFFFFF
++
++main                    = 000000 ; becomes 100% transparent via javascript
++main-elevated           = 141414
++card                    = 141414
++
++sidebar                 = 000000 ; bottom part of sky
++sidebar-alt             = 000000 ; top part of sky
++
++text                    = FFFFFF
++subtext                 = A8A8A8
++
++button-active           = FFFFFF
++button                  = ECECEC
++button-disabled         = 3A3A3A
++
++highlight               = 1F1F1F
++highlight-elevated      = 2A2A2A
++
++shadow                  = 000000
++selected-row            = FFFFFF
++misc                    = 7F7F7F
++notification-error      = E5534B
++notification            = D6D6D6
++tab-active              = 2A2A2A
++player                  = 0A0A0A

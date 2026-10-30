@@ -1,0 +1,26 @@
+# Screenshot editor (Print, SUPER+SHIFT+S, SHIFT+Print; see hyprland.lua).
+# The shot is already on the clipboard when this opens. Nothing is saved
+# unless you save it (Ctrl+S, or the save button): then it goes to
+# ~/Pictures/Screenshots. Enter copies the edited image; Esc closes.
+[general]
+fullscreen = false
+early-exit = false
+corner-roundness = 12
+initial-tool = "brush"
+copy-command = "wl-copy"
+annotation-size-factor = 2
+output-filename = "__HOME__/Pictures/Screenshots/%Y-%m-%d_%H-%M-%S.png"
+save-after-copy = false
+default-hide-toolbars = false
+disable-notifications = false
+actions-on-enter = ["save-to-clipboard"]
+actions-on-escape = ["exit"]
+no-window-decoration = true
+
+[font]
+family = "Inter"
+style = "Bold"
+
+# EVA MONO: white first, then the theme's few accents
+[color-palette]
+palette = ["#ffffff", "#e5534b", "#d9b36c", "#93a6ba", "#a3b89c", "#0a0a0a"]

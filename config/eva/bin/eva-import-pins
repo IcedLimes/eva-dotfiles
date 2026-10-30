@@ -1,0 +1,59 @@
+#!/usr/bin/env python3
+"""Copy the pinned taskbar icons from Plasma's panel into the Hyprland bar.
+
+Reads the launchers of Plasma's task manager (plasma-org.kde.plasma.desktop-
+appletsrc) and writes them as desktop IDs to ~/.config/eva/pinned.json, which
+the bar watches. Safe to re-run any time to re-sync from Plasma.
+"""
+import configparser
+import json
+import os
+import subprocess
+
+HOME = os.path.expanduser("~")
+APPLETS = os.path.join(HOME, ".config/plasma-org.kde.plasma.desktop-appletsrc")
+OUT = os.path.join(HOME, ".config/eva/pinned.json")
+
+
+def default_app(kind):
+    try:
+        if kind == "filemanager":
+            out = subprocess.run(["xdg-mime", "query", "default", "inode/directory"], capture_output=True, text=True).stdout
+        elif kind == "browser":
+            out = subprocess.run(["xdg-settings", "get", "default-web-browser"], capture_output=True, text=True).stdout
+        else:
+            return None
+        return out.strip().removesuffix(".desktop") or None
+    except OSError:
+        return None
+
+
+def to_id(launcher):
+    launcher = launcher.strip()
+    if launcher.startswith("applications:"):
+        return launcher[len("applications:"):].removesuffix(".desktop")
+    if launcher.startswith("preferred://"):
+        return default_app(launcher[len("preferred://"):])
+    if launcher.startswith("file://") and launcher.endswith(".desktop"):
+        return os.path.basename(launcher).removesuffix(".desktop")
+    return None
+
+
+cp = configparser.RawConfigParser(strict=False, delimiters=("=",))
+cp.optionxform = str
+cp.read(APPLETS)
+
+pins = []
+for section in cp.sections():
+    if cp.has_option(section, "launchers"):
+        for item in cp.get(section, "launchers").split(","):
+            pid = to_id(item)
+            if pid and pid not in pins:
+                pins.append(pid)
+
+os.makedirs(os.path.dirname(OUT), exist_ok=True)
+with open(OUT + ".tmp", "w") as f:
+    json.dump(pins, f, indent=2)
+    f.write("\n")
+os.replace(OUT + ".tmp", OUT)
+print("pinned:", ", ".join(pins) if pins else "(none)")

@@ -1,0 +1,179 @@
+#!/usr/bin/env python3
+"""Per-session app colors, so the EVA look stays in Hyprland.
+
+    eva-session hyprland   save Plasma's app colors (if not saved yet), then
+                           apply the current EVA theme to KDE, Konsole and GTK apps
+    eva-session plasma     put Plasma's app colors back; run from
+                           ~/.config/plasma-workspace/env before Plasma starts
+
+Only color settings are swapped (kdeglobals color groups and accent, GTK
+colors.css, Konsole's default profile, Firefox's userChrome/userContent.css);
+everything else is left alone.
+"""
+import configparser
+import json
+import os
+import shutil
+import subprocess
+import sys
+
+HOME = os.path.expanduser("~")
+CFG = os.environ.get("XDG_CONFIG_HOME", os.path.join(HOME, ".config"))
+BACKUP = os.path.join(CFG, "eva/plasma-backup")
+KDEGLOBALS = os.path.join(CFG, "kdeglobals")
+KONSOLERC = os.path.join(CFG, "konsolerc")
+GTK_FILES = [os.path.join(CFG, d, "colors.css") for d in ("gtk-3.0", "gtk-4.0")]
+GENERAL_KEYS = ["ColorScheme", "ColorSchemeHash", "AccentColor",
+                "LastUsedCustomAccentColor", "accentColorFromWallpaper"]
+# Fonts and icons the Hyprland session changes (value saved, or None = unset).
+LOOK_KEYS = [("General", "font"), ("General", "menuFont"), ("General", "toolBarFont"),
+             ("General", "smallestReadableFont"), ("General", "fixed"), ("Icons", "Theme")]
+GTK_SETTINGS = [os.path.join(CFG, d, "settings.ini") for d in ("gtk-3.0", "gtk-4.0")]
+GTK_KEYS = ["gtk-font-name", "gtk-icon-theme-name", "gtk-cursor-theme-name"]
+
+
+def load(path):
+    cp = configparser.RawConfigParser(strict=False, delimiters=("=",))
+    cp.optionxform = str  # KDE keys are case-sensitive
+    cp.read(path)
+    return cp
+
+
+def save_ini(cp, path):
+    tmp = path + ".eva-tmp"
+    with open(tmp, "w") as f:
+        cp.write(f, space_around_delimiters=False)
+    os.replace(tmp, path)
+
+
+def is_color_group(section):
+    return section.startswith(("Colors:", "ColorEffects:")) or section == "WM"
+
+
+def is_eva(cp):
+    return cp.get("General", "ColorScheme", fallback="").startswith("Eva")
+
+
+def backup_plasma():
+    cp = load(KDEGLOBALS)
+    if is_eva(cp):
+        return  # never save EVA colors as "Plasma's"
+    os.makedirs(BACKUP, exist_ok=True)
+
+    # One-time full copy, just in case.
+    full = os.path.join(BACKUP, "kdeglobals.original")
+    if not os.path.exists(full) and os.path.exists(KDEGLOBALS):
+        shutil.copy2(KDEGLOBALS, full)
+
+    konsole = load(KONSOLERC)
+    data = {
+        "groups": {s: dict(cp[s]) for s in cp.sections() if is_color_group(s)},
+        "general": {k: cp.get("General", k) for k in GENERAL_KEYS if cp.has_option("General", k)},
+        "kde_contrast": cp.get("KDE", "contrast", fallback=None),
+        "konsole_default": konsole.get("Desktop Entry", "DefaultProfile", fallback=None),
+        "look": [[g, k, cp.get(g, k, fallback=None)] for g, k in LOOK_KEYS],
+        "gtk_settings": [{k: load(f).get("Settings", k, fallback=None) for k in GTK_KEYS} for f in GTK_SETTINGS],
+    }
+    with open(os.path.join(BACKUP, "colors.json"), "w") as f:
+        json.dump(data, f, indent=2)
+    for i, path in enumerate(GTK_FILES):
+        if os.path.exists(path):
+            shutil.copy2(path, os.path.join(BACKUP, f"gtk{i}-colors.css"))
+
+
+def restore_plasma():
+    saved = os.path.join(BACKUP, "colors.json")
+    if not os.path.exists(saved):
+        return
+    cp = load(KDEGLOBALS)
+    if not is_eva(cp):
+        return  # already Plasma's colors
+    data = json.load(open(saved))
+
+    for s in [s for s in cp.sections() if is_color_group(s)]:
+        cp.remove_section(s)
+    for s, values in data["groups"].items():
+        cp.add_section(s)
+        for k, v in values.items():
+            cp.set(s, k, v)
+    if not cp.has_section("General"):
+        cp.add_section("General")
+    for k in GENERAL_KEYS:
+        cp.remove_option("General", k)
+    for k, v in data["general"].items():
+        cp.set("General", k, v)
+    if data.get("kde_contrast") is not None:
+        if not cp.has_section("KDE"):
+            cp.add_section("KDE")
+        cp.set("KDE", "contrast", data["kde_contrast"])
+    for g, k, v in data.get("look", [[g, k, None] for g, k in LOOK_KEYS]):
+        if v is None:
+            if cp.has_section(g):
+                cp.remove_option(g, k)
+                if g == "Icons" and not cp.options(g):
+                    cp.remove_section(g)
+        else:
+            if not cp.has_section(g):
+                cp.add_section(g)
+            cp.set(g, k, v)
+    save_ini(cp, KDEGLOBALS)
+
+    for path, values in zip(GTK_SETTINGS, data.get("gtk_settings", [])):
+        if not os.path.exists(path):
+            continue
+        gtk = load(path)
+        for k, v in values.items():
+            if v is None:
+                if gtk.has_section("Settings"):
+                    gtk.remove_option("Settings", k)
+            else:
+                if not gtk.has_section("Settings"):
+                    gtk.add_section("Settings")
+                gtk.set("Settings", k, v)
+        save_ini(gtk, path)
+
+    for i, path in enumerate(GTK_FILES):
+        src = os.path.join(BACKUP, f"gtk{i}-colors.css")
+        if os.path.exists(src):
+            shutil.copy2(src, path)
+
+    konsole = load(KONSOLERC)
+    if data.get("konsole_default"):
+        if not konsole.has_section("Desktop Entry"):
+            konsole.add_section("Desktop Entry")
+        konsole.set("Desktop Entry", "DefaultProfile", data["konsole_default"])
+    elif konsole.has_section("Desktop Entry"):
+        konsole.remove_option("Desktop Entry", "DefaultProfile")
+    save_ini(konsole, KONSOLERC)
+
+
+def restore_firefox():
+    """Remove the EVA Firefox stylesheets (eva-theme writes them in Hyprland)
+    and put back any of your own that were set aside."""
+    import glob
+    for base in (os.path.join(CFG, "mozilla/firefox"), os.path.join(HOME, ".mozilla/firefox")):
+        for path in glob.glob(os.path.join(base, "*", "chrome", "user*.css")):
+            try:
+                if "generated by eva-theme" not in open(path).read():
+                    continue
+            except OSError:
+                continue
+            os.remove(path)
+            if os.path.exists(path + ".eva-backup"):
+                os.replace(path + ".eva-backup", path)
+
+
+def main():
+    mode = sys.argv[1] if len(sys.argv) > 1 else ""
+    if mode == "hyprland":
+        backup_plasma()
+        subprocess.run([os.path.join(HOME, ".config/eva/bin/eva-theme"), "--apps"])
+    elif mode == "plasma":
+        restore_plasma()
+        restore_firefox()
+    else:
+        sys.exit(__doc__)
+
+
+if __name__ == "__main__":
+    main()

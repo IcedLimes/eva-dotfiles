@@ -1,0 +1,25 @@
+tap SUPER              app launcher (also SUPER + Space)
+Ctrl + Alt + Del       power menu: lock / log out / reboot
+Alt + Tab              window switcher: hold Alt, Tab to pick, let go
+SUPER + Return         terminal
+SUPER + E              file manager (Dolphin)
+SUPER + Q              close window
+SUPER + Up             maximize / restore
+SUPER + Down           minimize (restore from the taskbar)
+SUPER + F              fullscreen
+SUPER + T              tile / float the focused window
+SUPER + drag L / R     move / resize any window
+SUPER + Left / Right   focus window to the left / right
+SUPER + 1..0           go to workspace
+SUPER + SHIFT + 1..0   move window to workspace
+SUPER + SHIFT + S      screenshot region (also Print)
+SUPER + B              low power: 60 Hz, effects off
+SUPER + SHIFT + T      next theme: Crimson / Unit-01 / MAGI
+SUPER + SHIFT + V      clipboard history
+SUPER + N              dismiss notifications
+SUPER + L              lock
+Print                  screenshot region
+SHIFT + Print          screenshot whole screen
+3-finger swipe         switch workspace
+bottom edge            hover to show the bar
+SUPER + /              this cheatsheet

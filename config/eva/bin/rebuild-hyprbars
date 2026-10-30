@@ -1,0 +1,28 @@
+#!/bin/sh
+# Rebuild the hyprbars title-bar plugin for the installed Hyprland.
+# Run after any Hyprland update, then log out and back in.
+set -e
+commit=$(Hyprland --version-json | jq -r .commit)
+src=$(mktemp -d)
+trap 'rm -rf "$src"' EXIT
+
+git clone -q https://github.com/hyprwm/hyprland-plugins "$src"
+pin=$(grep "\"$commit\"" "$src/hyprpm.toml" | grep -oE '"[0-9a-f]{40}"\]' | tr -d '"]' || true)
+if [ -n "$pin" ]; then
+    git -C "$src" checkout -q "$pin"
+    echo "hyprland $commit -> hyprland-plugins $pin"
+else
+    echo "no pinned plugin commit for hyprland $commit yet; building latest"
+fi
+
+# Keep the grab point when dragging a maximized window (Plasma behavior).
+patch=~/.config/eva/patches/hyprbars-keep-grab-point.patch
+if git -C "$src" apply --check "$patch" 2>/dev/null; then
+    git -C "$src" apply "$patch"
+else
+    echo "warning: drag patch no longer applies; building without it"
+fi
+
+make -C "$src/hyprbars" -s
+install -Dm755 "$src/hyprbars/hyprbars.so" ~/.local/share/hyprland/plugins/hyprbars.so
+echo "installed ~/.local/share/hyprland/plugins/hyprbars.so"

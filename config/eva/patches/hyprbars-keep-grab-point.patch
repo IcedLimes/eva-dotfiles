@@ -1,0 +1,301 @@
+diff --git a/hyprbars/barDeco.cpp b/hyprbars/barDeco.cpp
+index c27653d..7a96bc4 100644
+--- a/hyprbars/barDeco.cpp
++++ b/hyprbars/barDeco.cpp
+@@ -22,6 +22,7 @@
+ #include <hyprland/src/layout/LayoutManager.hpp>
+ #include <hyprland/src/render/OpenGL.hpp>
+ #include <hyprland/src/state/MonitorState.hpp>
++#include <hyprland/src/managers/fullscreen/FullscreenController.hpp>
+ 
+ #include "globals.hpp"
+ #include "BarPassElement.hpp"
+@@ -151,12 +152,18 @@ void CHyprBar::onTouchUp(Event::SCallbackInfo& info, ITouch::SUpEvent e) {
+ 
+ void CHyprBar::onMouseMove(Vector2D coords) {
+     // ensure proper redraws of button icons on hover when using hardware cursors
+-    if (g_pGlobalState->config.iconOnHover->value())
+-        damageOnButtonHover();
++    // (EVA: always, buttons light up under the pointer)
++    damageOnButtonHover();
+ 
+     if (!m_bDragPending || m_bTouchEv || !validMapped(m_pWindow) || m_touchId != 0)
+         return;
+ 
++    // EVA: a click isn't a drag. Touchpad clicks wobble the pointer a pixel or
++    // two, which used to start moving the window (and un-maximize it); only
++    // start once the pointer has really travelled, like GTK's 8 px.
++    if (g_pInputManager->getMouseCoordsInternal().distance(m_vPressPos) < 8.0)
++        return;
++
+     m_bDragPending = false;
+     handleMovement();
+ }
+@@ -243,6 +250,7 @@ void CHyprBar::handleDownEvent(Event::SCallbackInfo& info, std::optional<ITouch:
+     } else {
+         m_lastMouseDown = Time::steadyNow();
+         m_bDragPending  = true;
++        m_vPressPos     = g_pInputManager->getMouseCoordsInternal();
+     }
+ }
+ 
+@@ -270,6 +278,37 @@ void CHyprBar::handleUpEvent(Event::SCallbackInfo& info) {
+ }
+ 
+ void CHyprBar::handleMovement() {
++    // Plasma-style un-maximize: Hyprland re-centers a maximized window on the
++    // cursor when a drag starts. Restore it first and keep the grabbed point
++    // (same relative x, same spot in the bar) under the cursor instead.
++    const auto PWINDOW = m_pWindow.lock();
++    if (PWINDOW && Fullscreen::controller()->isFullscreen(PWINDOW)) {
++        const auto   TARGET = PWINDOW->layoutTarget();
++        const auto   BEFORE = TARGET->position();
++        const auto   MOUSE  = g_pInputManager->getMouseCoordsInternal();
++        const double HEIGHT = g_pGlobalState->config.barHeight->value();
++        const double FRACX  = BEFORE.w > 0 ? std::clamp((MOUSE.x - BEFORE.x) / BEFORE.w, 0.0, 1.0) : 0.5;
++        const double GRABY  = std::clamp(MOUSE.y - (BEFORE.y - HEIGHT), 0.0, HEIGHT);
++
++        Fullscreen::controller()->setFullscreenMode(PWINDOW, Fullscreen::FSMODE_NONE);
++
++        const auto SIZE = TARGET->position().size();
++        TARGET->setPositionGlobal(CBox{MOUSE.x - FRACX * SIZE.x, MOUSE.y - GRABY + HEIGHT, SIZE.x, SIZE.y});
++    } else if (PWINDOW) {
++        // EVA: Plasma-style maximize lives in the Lua config (a floating window
++        // sized to fill the screen). If this window is maximized that way, let
++        // the config restore it under the cursor, keeping the grabbed spot.
++        const auto   BOX    = PWINDOW->layoutTarget()->position();
++        const auto   MOUSE  = g_pInputManager->getMouseCoordsInternal();
++        const double HEIGHT = g_pGlobalState->config.barHeight->value();
++        const double FRACX  = BOX.w > 0 ? std::clamp((MOUSE.x - BOX.x) / BOX.w, 0.0, 1.0) : 0.5;
++        const double GRABY  = std::clamp(MOUSE.y - (BOX.y - HEIGHT), 0.0, HEIGHT);
++        HyprlandAPI::invokeHyprctlCommand(
++            "eval",
++            std::format("if eva and eva.restore_for_drag then eva.restore_for_drag('0x{:x}', {}, {}, {}, {}) end", (uintptr_t)PWINDOW.get(), MOUSE.x, MOUSE.y,
++                        FRACX, GRABY));
++    }
++
+     g_pKeybindManager->changeMouseBindMode(MBIND_MOVE);
+     m_bDraggingThis = true;
+     Log::logger->log(Log::DEBUG, "[hyprbars] Dragging initiated on {:x}", (uintptr_t)m_pWindow.lock().get());
+@@ -372,6 +411,22 @@ void CHyprBar::renderBarButtons(CBox* barBox, const float scale, const float a)
+ 
+         g_pHyprOpenGL->renderRect(buttonBox, color, {.round = static_cast<int>(std::round(scaledButtonSize / 2.0)), .roundingPower = 2.F});
+ 
++        // EVA: light up under the pointer -- a glass disc with a soft halo
++        // behind the glyph; red for close, like Breeze.
++        if (i < 32 && (m_iButtonLitMask & (1u << i))) {
++            const bool CLOSE = button.cmd.find("close") != std::string::npos;
++            const auto LIT   = CLOSE ? CHyprColor(0.90, 0.33, 0.29, 0.85 * a) : CHyprColor(1.0, 1.0, 1.0, 0.18 * a);
++            for (int k = 3; k >= 1; --k) {
++                CBox halo = buttonBox;
++                halo.expand(k * 2.0 * scale);
++                halo.round();
++                auto h = LIT;
++                h.a *= (CLOSE ? 0.22 : 0.35) / k;
++                g_pHyprOpenGL->renderRect(halo, h, {.round = static_cast<int>(std::round(halo.w / 2.0)), .roundingPower = 2.F});
++            }
++            g_pHyprOpenGL->renderRect(buttonBox, LIT, {.round = static_cast<int>(std::round(scaledButtonSize / 2.0)), .roundingPower = 2.F});
++        }
++
+         offset += scaledButtonsPad + scaledButtonSize;
+     }
+ }
+@@ -675,17 +730,23 @@ void CHyprBar::damageOnButtonHover() {
+ 
+     const auto COORDS = cursorRelativeToBar();
+ 
++    // EVA: redraw only when which button is under the pointer changes
++    unsigned int mask = 0;
++    size_t       i    = 0;
+     for (auto& b : g_pGlobalState->buttons) {
+         const auto BARBUF     = Vector2D{(int)assignedBoxGlobal().w, HEIGHT};
+         Vector2D   currentPos = Vector2D{(BUTTONSRIGHT ? BARBUF.x - BARBUTTONPADDING - b.size - offset : offset), (BARBUF.y - b.size) / 2.0}.floor();
+ 
+-        bool       hover = VECINRECT(COORDS, currentPos.x, currentPos.y, currentPos.x + b.size + BARBUTTONPADDING, currentPos.y + b.size);
+-
+-        if (hover != m_bButtonHovered) {
+-            m_bButtonHovered = hover;
+-            damageEntire();
+-        }
++        if (VECINRECT(COORDS, currentPos.x, currentPos.y, currentPos.x + b.size + BARBUTTONPADDING, currentPos.y + b.size) && i < 32)
++            mask |= 1u << i;
+ 
+         offset += BARBUTTONPADDING + b.size;
++        ++i;
++    }
++
++    m_bButtonHovered = mask != 0;
++    if (mask != m_iButtonLitMask) {
++        m_iButtonLitMask = mask;
++        damageEntire();
+     }
+ }
+diff --git a/hyprbars/barDeco.hpp b/hyprbars/barDeco.hpp
+index a3b4e2d..e5c052f 100644
+--- a/hyprbars/barDeco.hpp
++++ b/hyprbars/barDeco.hpp
+@@ -109,11 +109,13 @@ class CHyprBar : public IHyprWindowDecoration {
+     bool                m_bDraggingThis  = false;
+     bool                m_bTouchEv       = false;
+     bool                m_bDragPending   = false;
++    Vector2D            m_vPressPos;              // EVA: where the press was, for the drag threshold
+     bool                m_bCancelledDown = false;
+     int                 m_touchId        = 0;
+ 
+     // store hover state for buttons as a bitfield
+     unsigned int m_iButtonHoverState = 0;
++    unsigned int m_iButtonLitMask    = 0; // EVA: which buttons are under the pointer (for the highlight)
+ 
+     // for dynamic updates
+     int    m_iLastHeight = 0;
+diff --git a/hyprbars/main.cpp b/hyprbars/main.cpp
+index ae9c90b..f9421be 100644
+--- a/hyprbars/main.cpp
++++ b/hyprbars/main.cpp
+@@ -14,6 +14,16 @@
+ #include <hyprland/src/config/lua/bindings/LuaBindingsInternal.hpp>
+ #include <hyprland/src/config/lua/types/LuaConfigColor.hpp>
+ #include <hyprland/src/state/MonitorState.hpp>
++#include <hyprland/src/managers/input/InputManager.hpp>
++#include <hyprland/src/managers/fullscreen/FullscreenController.hpp>
++#include <hyprland/src/layout/LayoutManager.hpp>
++#include <hyprland/src/layout/supplementary/DragController.hpp>
++#include <hyprland/src/protocols/XDGShell.hpp>
++#include <hyprland/src/xwayland/XSurface.hpp>
++#include <linux/input-event-codes.h>
++#include <hyprland/src/managers/SeatManager.hpp>
++#include <hyprland/src/managers/eventLoop/EventLoopManager.hpp>
++#include <hyprland/src/desktop/state/FocusState.hpp>
+ 
+ #include <hyprutils/string/VarList.hpp>
+ 
+@@ -32,6 +42,88 @@ APICALL EXPORT std::string PLUGIN_API_VERSION() {
+     return HYPRLAND_API_VERSION;
+ }
+ 
++// EVA: an app started a move by itself -- dragging its own title bar, like
++// Firefox's tab strip. If the Lua config has the window Plasma-style maximized,
++// let it restore the window under the cursor first, keeping the grabbed spot
++// (same relative x, same distance from the top), like a hyprbars drag.
++// Hooked at beginDragTarget: CWindow::onXDGMoveRequest is inlined into its
++// caller. App-initiated moves are the ones that grab the device exclusively.
++inline CFunctionHook* g_pBeginDragHook = nullptr;
++typedef void (*origBeginDrag)(Layout::CLayoutManager*, SP<Layout::ITarget>, eMouseBindMode, std::optional<Layout::eRectCorner>, bool);
++
++static void hkBeginDragTarget(Layout::CLayoutManager* thisptr, SP<Layout::ITarget> target, eMouseBindMode mode, std::optional<Layout::eRectCorner> forcedEdge,
++                              bool exclusiveDeviceGrab) {
++    const auto PWINDOW = target ? target->window() : nullptr;
++    if (PWINDOW && mode == MBIND_MOVE && exclusiveDeviceGrab && !Fullscreen::controller()->isFullscreen(PWINDOW)) {
++        const auto BOX = target->position();
++        if (BOX.w > 0 && BOX.h > 0) {
++            const auto   MOUSE = g_pInputManager->getMouseCoordsInternal();
++            const double FRACX = std::clamp((MOUSE.x - BOX.x) / BOX.w, 0.0, 1.0);
++            const double OFFY  = std::clamp(MOUSE.y - BOX.y, 0.0, BOX.h);
++            HyprlandAPI::invokeHyprctlCommand("eval",
++                                              std::format("if eva and eva.restore_for_move then eva.restore_for_move('0x{:x}', {}, {}, {}, {}) end", (uintptr_t)PWINDOW.get(),
++                                                          MOUSE.x, MOUSE.y, FRACX, OFFY));
++        }
++    }
++
++    (*(origBeginDrag)g_pBeginDragHook->m_original)(thisptr, target, mode, forcedEdge, exclusiveDeviceGrab);
++}
++
++// EVA: an app's own minimize button (Firefox's, in its tab bar). Hyprland
++// records the request and ignores it; hand it to the Lua config, which
++// minimizes the way the taskbar and SUPER+Down do.
++inline CFunctionHook* g_pUpdateStateHook = nullptr;
++typedef void (*origUpdateState)(Desktop::View::CWindow*);
++
++static void hkUpdateState(Desktop::View::CWindow* thisptr) {
++    bool minimize = false;
++    if (thisptr && thisptr->m_isMapped) {
++        if (const auto XDG = thisptr->m_xdgSurface.lock(); XDG) {
++            if (const auto TOPLEVEL = XDG->m_toplevel.lock(); TOPLEVEL)
++                minimize = TOPLEVEL->m_state.requestsMinimize.value_or(false);
++        } else if (const auto XWL = thisptr->m_xwaylandSurface.lock(); XWL)
++            minimize = XWL->m_state.requestsMinimize.value_or(false);
++    }
++
++    (*(origUpdateState)g_pUpdateStateHook->m_original)(thisptr);
++
++    if (minimize)
++        HyprlandAPI::invokeHyprctlCommand("eval", std::format("if eva and eva.minimize then eva.minimize('0x{:x}') end", (uintptr_t)thisptr));
++}
++
++// EVA: dismissing a right-click menu by clicking back on the app (e.g. the
++// page in Firefox) leaves GTK apps ignoring the keyboard, and clicking again
++// doesn't help: Hyprland's state is right and it already counts the window as
++// focused. The app needs to see focus leave and come back, which is what
++// Alt+Tab did. So on the click right after a right-click in the same window,
++// refresh that window's focus. Other clicks are left alone.
++static PHLWINDOWREF g_rightClickWindow;
++
++static void onMouseButtonForMenuFocus(const IPointer::SButtonEvent& e) {
++    if (e.state != WL_POINTER_BUTTON_STATE_PRESSED)
++        return;
++
++    const auto W = Desktop::focusState()->window();
++    if (e.button == BTN_RIGHT) {
++        g_rightClickWindow = W;
++        return;
++    }
++
++    const bool DISMISSES = W && e.button == BTN_LEFT && g_rightClickWindow.lock() == W;
++    g_rightClickWindow.reset();
++    if (!DISMISSES)
++        return;
++
++    // After Hyprland has handled this click.
++    g_pEventLoopManager->doLater([ref = PHLWINDOWREF{W}] {
++        const auto W2 = ref.lock();
++        if (!W2 || !validMapped(W2) || Desktop::focusState()->window() != W2)
++            return;
++        Desktop::focusState()->rawWindowFocus(nullptr, Desktop::FOCUS_REASON_OTHER);
++        Desktop::focusState()->rawWindowFocus(W2, Desktop::FOCUS_REASON_CLICK);
++    });
++}
++
+ static void onNewWindow(PHLWINDOW window) {
+     if (!window->m_X11DoesntWantBorders) {
+         if (std::ranges::any_of(window->m_windowDecorations, [](const auto& d) { return d->getDisplayName() == "Hyprbar"; }))
+@@ -210,6 +302,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
+ 
+     static auto P  = Event::bus()->m_events.window.open.listen([&](PHLWINDOW w) { onNewWindow(w); });
+     static auto P3 = Event::bus()->m_events.window.updateRules.listen([&](PHLWINDOW w) { onUpdateWindowRules(w); });
++    static auto P6 = Event::bus()->m_events.input.mouse.button.listen([&](IPointer::SButtonEvent e, Event::SCallbackInfo& info) { onMouseButtonForMenuFocus(e); });
+ 
+     g_pGlobalState->config.barColor            = makeShared<Config::Values::CColorValue>("plugin:hyprbars:bar_color", "Change the bar color", 0x88333333);
+     g_pGlobalState->config.textColor           = makeShared<Config::Values::CColorValue>("plugin:hyprbars:col.text", "Change the text color", 0xffffffff);
+@@ -259,6 +352,24 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
+     static auto P4 = Event::bus()->m_events.config.preReload.listen([&] { onPreConfigReload(); });
+     static auto P5 = Event::bus()->m_events.config.reloaded.listen([&] { onConfigReloaded(); });
+ 
++    for (auto& fn : HyprlandAPI::findFunctionsByName(PHANDLE, "beginDragTarget")) {
++        if (!fn.demangled.contains("CLayoutManager::beginDragTarget"))
++            continue;
++        g_pBeginDragHook = HyprlandAPI::createFunctionHook(PHANDLE, fn.address, (void*)::hkBeginDragTarget);
++        break;
++    }
++    if (!g_pBeginDragHook || !g_pBeginDragHook->hook())
++        HyprlandAPI::addNotification(PHANDLE, "[hyprbars] EVA: couldn't hook app-initiated moves; dragging Firefox won't un-maximize", CHyprColor{1.0, 0.6, 0.2, 1.0}, 5000);
++
++    for (auto& fn : HyprlandAPI::findFunctionsByName(PHANDLE, "onUpdateState")) {
++        if (!fn.demangled.contains("CWindow::onUpdateState"))
++            continue;
++        g_pUpdateStateHook = HyprlandAPI::createFunctionHook(PHANDLE, fn.address, (void*)::hkUpdateState);
++        break;
++    }
++    if (!g_pUpdateStateHook || !g_pUpdateStateHook->hook())
++        HyprlandAPI::addNotification(PHANDLE, "[hyprbars] EVA: couldn't hook minimize requests; Firefox's minimize button won't work", CHyprColor{1.0, 0.6, 0.2, 1.0}, 5000);
++
+     // add deco to existing windows
+     for (auto& w : Desktop::windowState()->windows()) {
+         if (w->isHidden() || !w->m_isMapped)
+@@ -273,6 +384,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
+ }
+ 
+ APICALL EXPORT void PLUGIN_EXIT() {
++
+     for (auto& m : State::monitorState()->monitors())
+         m->m_scheduledRecalc = true;
+ 

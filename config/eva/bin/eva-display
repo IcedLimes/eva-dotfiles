@@ -1,0 +1,8 @@
+#!/bin/sh
+# Display settings for Hyprland (KDE's page needs KWin): adjust in wdisplays,
+# close it, and the layout is saved for future logins.
+pgrep -x wdisplays >/dev/null && exit 0
+wdisplays
+if ~/.config/eva/bin/eva-display-save >/dev/null; then
+    notify-send -a "Display settings" -i preferences-desktop-display "Display layout saved" "It will be used every time you log in."
+fi
