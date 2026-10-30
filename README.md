@@ -91,8 +91,10 @@ It was built on one laptop (2560×1600 @ 240 Hz, Radeon iGPU + an RTX), so:
 ## Optional
 
 - **[vinyl-visualizer]** — the turntable overlay that docks into the moon
-  ("moon form"): Rei, the night sky and the moon outline react to it. Without
-  it the rest works; the moon simply never fills.
+  ("moon form"): Rei, the night sky and the moon outline react to it. Moon form
+  needs a version from October 29, 2026 or later (docking arrived in commit
+  `4bf3ce1`); its installer sets it up. Without it the rest works; the moon
+  simply never fills.
 - `extras/spicetify/` — a patch for Spotify's StarryNight theme so its stars only
   animate while Spotify has focus (they kept the GPU busy otherwise).
 - `extras/plymouth/` — the grey NERV boot / shutdown logo.
@@ -101,13 +103,8 @@ It was built on one laptop (2560×1600 @ 240 Hz, Radeon iGPU + an RTX), so:
 
 ## Credits
 
-- Wallpaper: Unit-01 fan art (edited: monochrome, flipped, parallax margin). Not
-  mine; check the original artist's terms before reposting it.
-- Rei's braille frames are traced from the *Fly Me to the Moon* ending of
-  *Neon Genesis Evangelion*.
-- DSEG7 font by keshikan, SIL Open Font License 1.1 (`assets/fonts/`).
-- The NERV logo on the start button uses a "nerv" logo font that isn't
-  included; install one under that family name, or the button shows a blank.
-- Built on Hyprland, hyprland-plugins (hyprbars), Quickshell and satty.
+The wallpaper is a Unit-01 piece by an artist I couldn't identify; where it was
+found, what was changed, and the rest of the credits (Rei, fonts, software) are
+in [CREDITS.md](CREDITS.md). If the wallpaper is yours, open an issue.
 
 [vinyl-visualizer]: https://github.com/IcedLimes/vinyl-visualizer
